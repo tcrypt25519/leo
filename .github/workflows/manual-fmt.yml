@@ -1,0 +1,30 @@
+name: Manual Format
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "master"
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - name: Format code
+        run: make fmt
+
+      - name: Commit and push
+        uses: tcrypt25519/ci/.github/actions/commit-changes@v1
