@@ -33,8 +33,8 @@ fn main() {
     let input_path = manifest_dir.join("symbols.txt");
     println!("cargo:rerun-if-changed={}", input_path.display());
 
-    let input = fs::read_to_string(&input_path)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", input_path.display()));
+    let input =
+        fs::read_to_string(&input_path).unwrap_or_else(|err| panic!("failed to read {}: {err}", input_path.display()));
     let symbols = parse_symbols(&input, &input_path);
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR missing"));
@@ -69,8 +69,7 @@ fn main() {
     }
     output.push_str("}\n");
 
-    fs::write(&out_path, output)
-        .unwrap_or_else(|err| panic!("failed to write {}: {err}", out_path.display()));
+    fs::write(&out_path, output).unwrap_or_else(|err| panic!("failed to write {}: {err}", out_path.display()));
 }
 
 fn parse_symbols(input: &str, path: &Path) -> Vec<SymbolSpec> {
@@ -92,12 +91,7 @@ fn parse_symbols(input: &str, path: &Path) -> Vec<SymbolSpec> {
                     panic!("invalid symbol entry at {}:{}", path.display(), line_no + 1);
                 }
                 if !(literal.starts_with('"') && literal.ends_with('"')) {
-                    panic!(
-                        "expected string literal for symbol {} at {}:{}",
-                        ident,
-                        path.display(),
-                        line_no + 1
-                    );
+                    panic!("expected string literal for symbol {} at {}:{}", ident, path.display(), line_no + 1);
                 }
                 (ident, Some(literal.to_string()))
             }
@@ -108,10 +102,7 @@ fn parse_symbols(input: &str, path: &Path) -> Vec<SymbolSpec> {
             panic!("invalid symbol identifier '{}' at {}:{}", ident, path.display(), line_no + 1);
         }
 
-        symbols.push(SymbolSpec {
-            ident: ident.to_string(),
-            literal,
-        });
+        symbols.push(SymbolSpec { ident: ident.to_string(), literal });
     }
 
     if symbols.is_empty() {
@@ -124,10 +115,8 @@ fn parse_symbols(input: &str, path: &Path) -> Vec<SymbolSpec> {
 fn is_valid_ident(ident: &str) -> bool {
     let mut chars = ident.chars();
     if let Some(first) = chars.next() {
-        (first == '_' || first.is_ascii_alphabetic())
-            && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+        (first == '_' || first.is_ascii_alphabetic()) && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
     } else {
         false
     }
 }
-
