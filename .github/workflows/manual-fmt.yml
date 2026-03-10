@@ -24,7 +24,7 @@ jobs:
           components: rustfmt
 
       - name: Format code
-        run: cargo fmt
+        run: cargo +nightly fmt
 
       - name: Commit and push
         uses: tcrypt25519/ci/.github/actions/commit-changes@v1
