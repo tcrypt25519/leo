@@ -105,13 +105,11 @@ fn parse_symbols(input: &str, path: &Path) -> Vec<SymbolSpec> {
 
 fn is_valid_ident(ident: &str) -> bool {
     let mut chars = ident.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-
-    if !(first == '_' || first.is_ascii_alphabetic()) {
-        return false;
+    if let Some(first) = chars.next() {
+        (first == '_' || first.is_ascii_alphabetic())
+            && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    } else {
+        false
     }
-
-    chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
+
