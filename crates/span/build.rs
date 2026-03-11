@@ -17,9 +17,7 @@
 //! Builds the symbol strings into `Symbol` values.
 
 use std::{
-    error::Error,
-    env, fs,
-    fmt,
+    env, fmt, fs,
     io::{BufWriter, Read, Write},
     path::{Path, PathBuf},
     process::ExitCode,
@@ -34,47 +32,7 @@ struct SymbolLine<'a> {
     literal: Option<&'a str>,
 }
 
-#[derive(Debug)]
-enum BuildError {
-    MissingEnvVar(&'static str, env::VarError),
-    Io { action: &'static str, path: PathBuf, source: std::io::Error },
-    InvalidSymbolEntry { path: PathBuf, line_no: usize },
-    InvalidStringLiteral { ident: String, path: PathBuf, line_no: usize },
-    InvalidIdentifier { ident: String, path: PathBuf, line_no: usize },
-    NoSymbolsFound { path: PathBuf },
-}
-
-impl fmt::Display for BuildError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingEnvVar(name, source) => write!(f, "missing environment variable {name}: {source}"),
-            Self::Io { action, path, source } => write!(f, "failed to {action} {}: {source}", path.display()),
-            Self::InvalidSymbolEntry { path, line_no } => {
-                write!(f, "invalid symbol entry at {}:{line_no}", path.display())
-            }
-            Self::InvalidStringLiteral { ident, path, line_no } => {
-                write!(f, "expected string literal for symbol {ident} at {}:{line_no}", path.display())
-            }
-            Self::InvalidIdentifier { ident, path, line_no } => {
-                write!(f, "invalid symbol identifier '{ident}' at {}:{line_no}", path.display())
-            }
-            Self::NoSymbolsFound { path } => write!(f, "no symbols found in {}", path.display()),
-        }
-    }
-}
-
-impl Error for BuildError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::MissingEnvVar(_, source) => Some(source),
-            Self::Io { source, .. } => Some(source),
-            Self::InvalidSymbolEntry { .. }
-            | Self::InvalidStringLiteral { .. }
-            | Self::InvalidIdentifier { .. }
-            | Self::NoSymbolsFound { .. } => None,
-        }
-    }
-}
+type BuildResult<T> = Result<T, String>;
 
 fn main() -> ExitCode {
     match run() {
@@ -86,7 +44,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<(), BuildError> {
+fn run() -> BuildResult<()> {
     let manifest_dir = manifest_dir()?;
     let input_path = manifest_dir.join("symbols.txt");
     println!("cargo:rerun-if-changed={}", input_path.display());
@@ -94,16 +52,12 @@ fn run() -> Result<(), BuildError> {
     let input = read_symbols(&input_path)?;
     let symbols = parse_symbols(&input, &input_path)?;
     if symbols.is_empty() {
-        return Err(BuildError::NoSymbolsFound { path: input_path });
+        return Err(format!("no symbols found in {}", input_path.display()));
     }
 
     let out_dir = out_dir()?;
     let out_path = out_dir.join("symbols_generated.rs");
-    let output = fs::File::create(&out_path).map_err(|source| BuildError::Io {
-        action: "write",
-        path: out_path.clone(),
-        source,
-    })?;
+    let output = fs::File::create(&out_path).map_err(|source| io_error("write", &out_path, source))?;
     let mut output = BufWriter::new(output);
 
     write_output(&mut output, PRE_DEFINED_HEADER, &out_path)?;
@@ -113,35 +67,23 @@ fn run() -> Result<(), BuildError> {
     emit_sym_module(&symbols, &mut output, &out_path)?;
 
     write_output(&mut output, SYM_FOOTER, &out_path)?;
-    output.flush().map_err(|source| BuildError::Io { action: "write", path: out_path, source })?;
+    output.flush().map_err(|source| io_error("write", &out_path, source))?;
     Ok(())
 }
 
-fn manifest_dir() -> Result<PathBuf, BuildError> {
-    env::var("CARGO_MANIFEST_DIR")
-        .map(PathBuf::from)
-        .map_err(|source| BuildError::MissingEnvVar("CARGO_MANIFEST_DIR", source))
+fn manifest_dir() -> BuildResult<PathBuf> {
+    env::var("CARGO_MANIFEST_DIR").map(PathBuf::from).map_err(|source| missing_env_var("CARGO_MANIFEST_DIR", source))
 }
 
-fn out_dir() -> Result<PathBuf, BuildError> {
-    env::var("OUT_DIR")
-        .map(PathBuf::from)
-        .map_err(|source| BuildError::MissingEnvVar("OUT_DIR", source))
+fn out_dir() -> BuildResult<PathBuf> {
+    env::var("OUT_DIR").map(PathBuf::from).map_err(|source| missing_env_var("OUT_DIR", source))
 }
 
-fn read_symbols(path: &Path) -> Result<String, BuildError> {
+fn read_symbols(path: &Path) -> BuildResult<String> {
     let input_len = fs::metadata(path).map(|meta| meta.len() as usize).unwrap_or(0);
     let mut input = String::with_capacity(input_len);
-    let mut file = fs::File::open(path).map_err(|source| BuildError::Io {
-        action: "read",
-        path: path.to_path_buf(),
-        source,
-    })?;
-    file.read_to_string(&mut input).map_err(|source| BuildError::Io {
-        action: "read",
-        path: path.to_path_buf(),
-        source,
-    })?;
+    let mut file = fs::File::open(path).map_err(|source| io_error("read", path, source))?;
+    file.read_to_string(&mut input).map_err(|source| io_error("read", path, source))?;
     Ok(input)
 }
 
@@ -154,7 +96,7 @@ fn is_valid_ident(ident: &str) -> bool {
     }
 }
 
-fn parse_symbol_line<'a>(line: &'a str, path: &Path, line_no: usize) -> Result<Option<SymbolLine<'a>>, BuildError> {
+fn parse_symbol_line<'a>(line: &'a str, path: &Path, line_no: usize) -> BuildResult<Option<SymbolLine<'a>>> {
     let trimmed = line.trim();
     if trimmed.is_empty() || trimmed.starts_with("//") {
         return Ok(None);
@@ -165,14 +107,10 @@ fn parse_symbol_line<'a>(line: &'a str, path: &Path, line_no: usize) -> Result<O
             let ident = left.trim();
             let literal = right.trim();
             if ident.is_empty() || literal.is_empty() {
-                return Err(BuildError::InvalidSymbolEntry { path: path.to_path_buf(), line_no });
+                return Err(format!("invalid symbol entry at {}:{line_no}", path.display()));
             }
             if !(literal.starts_with('"') && literal.ends_with('"')) {
-                return Err(BuildError::InvalidStringLiteral {
-                    ident: ident.to_owned(),
-                    path: path.to_path_buf(),
-                    line_no,
-                });
+                return Err(format!("invalid symbol literal for '{ident}' at {}:{line_no}", path.display()));
             }
             (ident, Some(literal))
         }
@@ -180,17 +118,13 @@ fn parse_symbol_line<'a>(line: &'a str, path: &Path, line_no: usize) -> Result<O
     };
 
     if !is_valid_ident(ident) {
-        return Err(BuildError::InvalidIdentifier {
-            ident: ident.to_owned(),
-            path: path.to_path_buf(),
-            line_no,
-        });
+        return Err(format!("invalid symbol identifier '{ident}' at {}:{line_no}", path.display()));
     }
 
     Ok(Some(SymbolLine { ident, literal }))
 }
 
-fn parse_symbols<'a>(input: &'a str, path: &Path) -> Result<Vec<SymbolLine<'a>>, BuildError> {
+fn parse_symbols<'a>(input: &'a str, path: &Path) -> BuildResult<Vec<SymbolLine<'a>>> {
     let mut symbols = Vec::with_capacity(input.lines().count());
     for (line_no, line) in input.lines().enumerate() {
         let Some(symbol) = parse_symbol_line(line, path, line_no + 1)? else {
@@ -203,23 +137,23 @@ fn parse_symbols<'a>(input: &'a str, path: &Path) -> Result<Vec<SymbolLine<'a>>,
     Ok(symbols)
 }
 
-fn write_output(output: &mut impl Write, contents: &str, out_path: &Path) -> Result<(), BuildError> {
-    output.write_all(contents.as_bytes()).map_err(|source| BuildError::Io {
-        action: "write",
-        path: out_path.to_path_buf(),
-        source,
-    })
+fn missing_env_var(name: &'static str, source: env::VarError) -> String {
+    format!("missing environment variable {name}: {source}")
 }
 
-fn write_output_fmt(output: &mut impl Write, out_path: &Path, args: fmt::Arguments<'_>) -> Result<(), BuildError> {
-    output.write_fmt(args).map_err(|source| BuildError::Io {
-        action: "write",
-        path: out_path.to_path_buf(),
-        source,
-    })
+fn io_error(action: &'static str, path: &Path, source: std::io::Error) -> String {
+    format!("failed to {action} {}: {source}", path.display())
 }
 
-fn emit_pre_defined(symbols: &[SymbolLine<'_>], output: &mut impl Write, out_path: &Path) -> Result<(), BuildError> {
+fn write_output(output: &mut impl Write, contents: &str, out_path: &Path) -> BuildResult<()> {
+    output.write_all(contents.as_bytes()).map_err(|source| io_error("write", out_path, source))
+}
+
+fn write_output_fmt(output: &mut impl Write, out_path: &Path, args: fmt::Arguments<'_>) -> BuildResult<()> {
+    output.write_fmt(args).map_err(|source| io_error("write", out_path, source))
+}
+
+fn emit_pre_defined(symbols: &[SymbolLine<'_>], output: &mut impl Write, out_path: &Path) -> BuildResult<()> {
     for symbol in symbols {
         match symbol.literal {
             Some(literal) => write_output_fmt(output, out_path, format_args!("    {literal},\n"))?,
@@ -230,7 +164,7 @@ fn emit_pre_defined(symbols: &[SymbolLine<'_>], output: &mut impl Write, out_pat
     Ok(())
 }
 
-fn emit_sym_module(symbols: &[SymbolLine<'_>], output: &mut impl Write, out_path: &Path) -> Result<(), BuildError> {
+fn emit_sym_module(symbols: &[SymbolLine<'_>], output: &mut impl Write, out_path: &Path) -> BuildResult<()> {
     for (index, symbol) in symbols.iter().enumerate() {
         write_output_fmt(
             output,
